@@ -31,13 +31,11 @@
 #include "Basics/tri-strings.h"
 #include "Cluster/ClusterComm.h"
 #include "Cluster/ClusterInfo.h"
+#include "Cluster/ClusterMethods.h"
 #include "Cluster/ServerState.h"
 #include "GeneralServer/AuthenticationFeature.h"
 #include "Rest/HttpRequest.h"
 #include "RestServer/DatabaseFeature.h"
-//#include "V8/v8-conv.h"
-//#include "V8/v8-utils.h"
-//#include "V8/v8-vpack.h"
 #include "Indexes/Index.h"
 #include "Indexes/IndexFactory.h"
 #include "StorageEngine/EngineSelectorFeature.h"
@@ -101,15 +99,30 @@ Result Indexes::getIndex(arangodb::LogicalCollection const* collection,
 
 arangodb::Result Indexes::getAll(arangodb::LogicalCollection const* collection,
                                  bool withFigures, VPackBuilder& result) {
+
+  LOG_TOPIC(ERR, Logger::FIXME) << "calling getAll Indexes for collection";
+  
   VPackBuilder tmp;
   if (ServerState::instance()->isCoordinator()) {
+    LOG_TOPIC(ERR, Logger::FIXME) << "on coordinator";
     std::string const databaseName(collection->dbName());
-    std::string const cid = collection->cid_as_string();
+    //std::string const cid = collection->cid_as_string();
+    std::string const& cid = collection->name();
 
     auto c = ClusterInfo::instance()->getCollection(databaseName, cid);
+
+    // add code for estimates here
+    std::vector<std::pair<std::string,std::uint64_t>> estimates;
+    if (selectivityEstimatesOnCoordinator(databaseName,cid,estimates) != TRI_ERROR_NO_ERROR){
+      LOG_TOPIC(ERR, Logger::FIXME) << "count failed";
+    } else {
+      LOG_TOPIC(ERR, Logger::FIXME) << "count succ";
+    }
+
     c->getIndexesVPack(tmp, withFigures, false);
 
   } else {
+    LOG_TOPIC(ERR, Logger::FIXME) << "on dbserver";
     // add locks for consistency
 
     SingleCollectionTransaction trx(

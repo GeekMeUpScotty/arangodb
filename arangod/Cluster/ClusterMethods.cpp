@@ -810,6 +810,82 @@ int countOnCoordinator(std::string const& dbname, std::string const& collname,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// @brief 
+////////////////////////////////////////////////////////////////////////////////
+
+int selectivityEstimatesOnCoordinator(std::string const& dbname, std::string const& collname,
+                       std::vector<std::pair<std::string, uint64_t>>& result) {
+
+  // Set a few variables needed for our work:
+  ClusterInfo* ci = ClusterInfo::instance();
+  auto cc = ClusterComm::instance();
+  if (cc == nullptr) {
+    // nullptr happens only during controlled shutdown
+    return TRI_ERROR_SHUTTING_DOWN;
+  }
+
+  result.clear();
+
+  // First determine the collection ID from the name:
+  std::shared_ptr<LogicalCollection> collinfo;
+  try {
+    collinfo = ci->getCollection(dbname, collname);
+  } catch (...) {
+    return TRI_ERROR_ARANGO_COLLECTION_NOT_FOUND;
+  }
+  TRI_ASSERT(collinfo != nullptr);
+
+  auto shards = collinfo->shardIds();
+  std::vector<ClusterCommRequest> requests;
+  std::string requestsUrl;
+  auto body = std::make_shared<std::string>();
+  for (auto const& p : *shards) {
+    requestsUrl = "/_db/" + StringUtils::urlEncode(dbname) +
+                  "/_api/index?collection=" + StringUtils::urlEncode(p.first);
+    requests.emplace_back("shard:" + p.first,
+                          arangodb::rest::RequestType::GET,
+                          requestsUrl, body);
+  }
+  size_t nrDone = 0;
+  cc->performRequests(requests, CL_DEFAULT_TIMEOUT, nrDone, Logger::QUERIES);
+  for (auto& req : requests) {
+    auto& res = req.result;
+    if (res.status == CL_COMM_RECEIVED) {
+      if (res.answer_code == arangodb::rest::ResponseCode::OK) {
+        std::shared_ptr<VPackBuilder> answerBuilder = ExtractAnswer(res);
+        VPackSlice answer = answerBuilder->slice();
+
+        if (answer.isObject()) {
+          // add to the total
+          LOG_TOPIC(ERR, Logger::FIXME) << "result" << answer.toJson();
+          for(auto const& identifier : VPackObjectIterator(answer.get("identifiers"))){
+            if(identifier.value.hasKey("selectivityEstimate")) {
+              double estimate = arangodb::basics::VelocyPackHelper::getNumericValue(
+                identifier.value, "selectivityEstimate", 0.0);
+								LOG_TOPIC(ERR,Logger::FIXME) << "estimate - "
+																						 << identifier.key.copyString()
+																						 << " (shard/indexid): " << estimate;
+
+            }
+          }
+
+          //result.emplace_back(res.shardID, arangodb::basics::VelocyPackHelper::getNumericValue<uint64_t>(
+          //        answer, "count", 0));
+        } else {
+          return TRI_ERROR_INTERNAL;
+        }
+      } else {
+        return static_cast<int>(res.answer_code);
+      }
+    } else {
+      return TRI_ERROR_CLUSTER_BACKEND_UNAVAILABLE;
+    }
+  }
+
+  return TRI_ERROR_NO_ERROR;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 /// @brief creates one or many documents in a coordinator
 ///
 /// In case of many documents (slice is a VPackArray) it will send to each
